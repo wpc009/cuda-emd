@@ -2,14 +2,11 @@
 #define _CUBIC_SPLINE_
 #include "cusparse.h"
 #include "common.cuh"
-#define DEBUG 
+// #define DEBUG 
 
 template <typename T>
 __global__ void _prepare_systems(T* a,T* b,T* c,T* d,const T* x,const T* y,const int* check_point_idx,T* h,const int n)
 {
-    //blockDim == systemSize
-    //gridDim = numOfSystem
-    //blockIdx == systemIdx
     int ti_base = blockIdx.x * blockDim.x + threadIdx.x;
     // __shared__ T h[blockDim+2];
 
@@ -24,7 +21,6 @@ __global__ void _prepare_systems(T* a,T* b,T* c,T* d,const T* x,const T* y,const
     if(ti == 0){
         //head
 
-        // h[1] = 0.0f;
         d[ti] = 6.0f*(y[check_point_idx[1]] - y[check_point_idx[0]])/(x[check_point_idx[1]] - x[check_point_idx[0]])/ (x[check_point_idx[1]] - x[check_point_idx[0]]);
         h[ti] = 0.0f;
     }else if (ti < n -1){
@@ -59,7 +55,6 @@ __global__ void _prepare_systems(T* a,T* b,T* c,T* d,const T* x,const T* y,const
     __syncthreads();        
     b[ti] = 2.0f;
     a[ti] = ti < n - 1 ? h[ti] / (h[ti] + h[ti +1]) : 1.0f;
-    // c[ti] = h[threadIdx.x+2] / (h[threadIdx.x+1] + h[threadIdx.x +2]);
     c[ti] = ti < n - 1 ? h[ti +1 ] / (h[ti+1] + h[ti]):0.0f;
     }
 }
@@ -80,6 +75,11 @@ __global__ void _cubic_spline_segment(const T* x,const T* y ,const T* m,const T*
     ;
 }
 
+/*
+ * cubic spline version 1
+ * Each block handle one segmentation a time.
+ * when num of threads in a block is larger than points in a segment. The larger indexed threads will be wasted.
+ */
 template <typename T>
 __global__ void _cubic_spline(const T* x,T* y,const int* check_point_idx,const T* m,const T* h,int totalSize){
     //grid-stride
@@ -102,7 +102,9 @@ __global__ void _cubic_spline(const T* x,T* y,const int* check_point_idx,const T
 }
 
 /*
+ * Cubci Spline Version 2
  * Revert the role of block and thread. use the assumption of the num of blocks much smaller then num of threads.
+ * Much faster than version 1. More efficient compare to version 1.
  */
 template <typename T>
 __global__ void _cubic_spline2(const T* x,const T* y,T* spline_out,const int* check_point_idx,const T* m,const T* h,int totalSize)
@@ -183,7 +185,6 @@ void preparing_parameters_cpu(
         // const T* sub_x = x + base;
         const int* sub_x_idx = check_point_idx + base;
         const T* sub_y = y + base;
-
         int last = len -1;
         for(int i=0;i<systemSize && i+base < len;i++)
         {
@@ -193,37 +194,37 @@ void preparing_parameters_cpu(
                 sub_a[i] = 0.0f;
                 sub_c[i] = 1.0f;
                 sub_d[i] = 6.0f*(y[sub_x_idx[1]] - y[sub_x_idx[0]])/(x[sub_x_idx[1]] - x[sub_x_idx[0]])/ (x[sub_x_idx[1]] - x[sub_x_idx[0]]);
-                // sub_d[i] = 0.0f;
+                
             }else if (i + base < last){
                 sub_a[i] = sub_diff[i] / (sub_diff[i] + sub_diff[i+1]);
                 sub_c[i] = sub_diff[i+1] / (sub_diff[i] + sub_diff[i+1]);
                 sub_d[i] = 0.0f;
-                // println("=============================");
                 for(int j=0;j<3;j++){
                     sub_d[i] += 6.0f * y[sub_x_idx[i-1 + j]] / (x[sub_x_idx[i-1 + j]] - x[sub_x_idx[i-1 + (j+1)%3]]) / (x[sub_x_idx[i-1+j]] - x[sub_x_idx[i-1 + (j+2)%3]]);
-                    // printf("y[%d] / (x[%d] - x[%d]) / (x[%d] - x[%d])\n",i-1+j,i-1+j,i-1+(j+1)%3,i-1+j,i-1+(j+2)%3);
                 }
-                // printf("=============================\n");
-                // println("=============================");
-
-            }else{
-                // println("last i=%d y[i]=%f y[i-1]=%f",i,y[i],y[i-1]);
+            }else{                
                 sub_d[i] = 6.0f * (0.0f - (y[sub_x_idx[i]] - y[sub_x_idx[i-1]])/(x[sub_x_idx[i]] - x[sub_x_idx[i-1]]) ) / (x[sub_x_idx[i]] - x[sub_x_idx[i-1]]);
-                // sub_d[i] = 0.0f;
-                // printf("last element:%d@%f\n",i,sub_d[i]);
                 sub_a[i] = 1.0f;
                 sub_c[i] = 0.0f;
-
             }
-
+#ifdef DEBUG
             if(sub_d[i] != sub_d[i]){
                 println("d[i+base] = %f, i+base=%d,i=%d",sub_d[i],i+base,i);
             }
+#endif
         }
     }
 
 }
 
+/*
+
+Memory Demand: n x 5 x sizeof(T) + min(n,8) ×(4)×sizeof(T) + N x sizeof(T)
+
+n is the num of check points.
+N is the num of spline points.
+usally n << N.
+*/
 template <typename T,int const systemSize>
 int cubic_spline_gpu(const T* d_data_x,const T* d_data_y,T* d_spline_out,int data_len,const int * d_check_point_idx,int check_point_len)
 {
