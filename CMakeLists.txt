@@ -9,6 +9,7 @@ find_package(CUDA REQUIRED)
 
 # Add include/lib paths for local cmake builds
 include_directories(${CMAKE_SOURCE_DIR}/../../include)
+include_directories(./)
 link_directories(${CMAKE_SOURCE_DIR}/../../lib/)
 
 set(CCFILES

@@ -38,6 +38,8 @@
 
 #include <string>
 
+#include "emd.cuh"
+#include "cubic_spline.cuh"
 
 using namespace cudpp_app;
 
@@ -46,28 +48,23 @@ using namespace cudpp_app;
 void runTest( int argc, char** argv);
 void cubicSpline();
 void testing(int,int);
+void testing2(int,int);
 void testCases();
 
-template <typename T> __global__ void _prepare_systems(T* a,T* b,T* c,T* d,const T* x,const T* y,T* h,const int n);
-template <typename T> void preparing_parameters_gpu(T*,T*,T*,T*,const T*,T*,const T*,const int*,int,int,int);
-template <typename T> void preparing_parameters_cpu(T*,T*,T*,T*,const T*,T*,const T*,const int*,int,int,int);
+// template <typename T> __global__ void _prepare_systems(T* a,T* b,T* c,T* d,const T* x,const T* y,T* h,const int n);
+// template <typename T> void preparing_parameters_gpu(T*,T*,T*,T*,const T*,T*,const T*,const int*,int,int,int);
+// template <typename T> void preparing_parameters_cpu(T*,T*,T*,T*,const T*,T*,const T*,const int*,int,int,int);
 
   
-#define printArray(array,len) printArrayFmt(array,len,%f)
 
 
-#define printArrayFmt(array,len,fmt) printf(#array"=["); \
-    for(int i =0;i<len;i++){ \
-        if(i % 10 == 0){ \
-            printf("\n");   \
-        }   \
-        printf(#fmt", ",array[i]); \
-    } \
-    printf("]\n")
-    
-#define println(fmt,...) printf(fmt,##__VA_ARGS__);printf("\n")
-
-#define blockalign(x,block_size) (x + block_size -1 )/ block_size
+#define TIME(t,msg,code) do {\
+    t.reset(); \
+    t.start(); \
+    code;\
+    t.stop();\
+    printf(#msg" cost:%f ms\n",t.getTime());\
+} while(0)
 
 struct AddressPair_F
 {
@@ -155,9 +152,14 @@ void testCases(){
         
         Case 1. thread stride testing
     */
+    testing2(
+        20 , //num of check points, determin the num of segments. < total blocks
+        512 //system size,  the size of a single system. determin the num of threads. < segment size(20)
+    );
+
     testing(
-        100000, //num of check points, determin the num of segments. < total blocks
-        1024 //system size,  the size of a single system. determin the num of threads. < segment size(20)
+        20,
+        512
     );
 }
 
@@ -165,217 +167,77 @@ void testCases(){
 //! Run a simple test for CUDA
 ////////////////////////////////////////////////////////////////////////////////
 template <typename T>
-__global__ void _prepare_systems(T* a,T* b,T* c,T* d,const T* x,const T* y,const int* check_point_idx,T* h,const int n)
+void generateFakeData(T* data_x,T* data_y,int len,int * check_points,int check_points_len)
 {
-    //blockDim == systemSize
-    //gridDim = numOfSystem
-    //blockIdx == systemIdx
-    int ti_base = blockIdx.x * blockDim.x + threadIdx.x;
-    // __shared__ T h[blockDim+2];
-
-    //grid-stride
-    for(int ti = ti_base;ti < n;ti += blockDim.x * gridDim.x){
-
-
-
-    if (ti >= n)
-        return;
-
-    if(ti == 0){
-        //head
-
-        // h[1] = 0.0f;
-        d[ti] = 6.0f*(y[check_point_idx[1]] - y[check_point_idx[0]])/(x[check_point_idx[1]] - x[check_point_idx[0]])/ (x[check_point_idx[1]] - x[check_point_idx[0]]);
-        h[ti] = 0.0f;
-    }else if (ti < n -1){
-        //middle
-        /* shared mem version
-        if( threadIdx.x == 0){
-            //head thread
-            h[0] = ti > 2 ? x[ti-1] - x[ti -2]:0.0f;
-        }else if(threadIdx.x == blockDim.x -1){
-            //last thread
-            h[threadIdx.x + 2] = x[ti +1 ] - x[ti];
-        }
-        */
-        
-        for(int j=0;j<3;j++){
-            d[ti] += 6.0f * y[check_point_idx[ti-1 + j]] / (x[check_point_idx[ ti-1 + j]] - x[check_point_idx[ti-1 + (j+1)%3]]) / (x[check_point_idx[ ti-1+j]] - x[check_point_idx[ti-1 + (j+2)%3]]);
-        }
-        h[ti] = x[check_point_idx[ti]] - x[check_point_idx[ti-1]]; 
-        
-    }else{
-        //last ti = n-1
-        
-        d[ti] = 6.0f * (0.0f - (y[check_point_idx[ ti]] - y[check_point_idx[ti-1]])/(x[check_point_idx[ti]] - x[check_point_idx[ti-1]]) ) / (x[check_point_idx[ti]] - x[check_point_idx[ti-1]]);
-        h[ti] = x[check_point_idx[ ti]] - x[check_point_idx[ti-1]];
+    for(int i =0;i< len;i++)
+    {
+        data_x[i] = ((float)i) * 0.05;
+        data_y[i] = cos(data_x[i]);
     }
 
-    if(threadIdx.x == blockDim.x -1 && ti < n - 1){
-        //block can not be synchronized, so calculate the h[ti + 1] for the last ti in block. do not exceed n -1.
-        h[ti + 1]  = x[check_point_idx[ti + 1]] - x[check_point_idx[ti]];
+    for(int i = 0;i<check_points_len;i++)
+    {        
+        check_points[i] = i * 20;
     }
+}
+
+void testing2(int len,int SYSTEM_SIZE){
+
+    float * d_diff;
+    float * d_spline_x;
+    float * d_spline_y;
+    float * d_spline_out;
+    int * d_check_point_idx;
+
+    float * spline_x;
+    float * spline_y;
+    float * spline_out;
+
+    int * check_points;
+
+    int spline_len = (len -1) * 20 + 1;
+    int memSize = len * sizeof(float);
+    int error = 0;
+
+    spline_x = (float*) malloc(spline_len * sizeof(float));
+    spline_y = (float*) malloc(spline_len * sizeof(float));
+    spline_out = (float*) malloc(spline_len * sizeof(float));
+    check_points = (int*) malloc(memSize);
+
+    generateFakeData(spline_x,spline_y,spline_len,check_points,len);
+
+    CUDA_SAFE_CALL( cudaMalloc( (void**) &d_diff,spline_len * sizeof(float)));
+    CUDA_SAFE_CALL( cudaMalloc( (void**) &d_spline_x,spline_len * sizeof(float)));
+    CUDA_SAFE_CALL( cudaMalloc( (void**) &d_spline_y,spline_len * sizeof(float)));
+    CUDA_SAFE_CALL( cudaMalloc( (void**) &d_spline_out,spline_len * sizeof(float)));
+    CUDA_SAFE_CALL( cudaMalloc( (void**) &d_check_point_idx,memSize));
+
+    CUDA_SAFE_CALL( cudaMemcpy( d_spline_x, spline_x, spline_len * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_SAFE_CALL( cudaMemcpy( d_spline_y, spline_y, spline_len * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_SAFE_CALL( cudaMemcpy( d_check_point_idx, check_points, memSize, cudaMemcpyHostToDevice));
+
+    printArrayFmt(check_points,len,%d);
+    printArray(spline_x,spline_len);
+    // _diff<float><<<28*2,512 >>>(d_spline_y,d_diff,spline_len);
+
+    cubic_spline_gpu<float,512>(d_spline_x,d_spline_y,d_spline_out,spline_len,d_check_point_idx,len);
+
+    CUDA_SAFE_CALL( cudaMemcpy( spline_out, d_spline_out, spline_len * sizeof(float), cudaMemcpyDeviceToHost));
+
+    printArray(spline_out,spline_len);
+    printArray(spline_y,spline_len);
+
+finally:
+    free(spline_x);
+    free(spline_y);
+    free(spline_out);
+    free(check_points);
+    CUDA_SAFE_CALL( cudaFree(d_diff) );
+    CUDA_SAFE_CALL( cudaFree(d_spline_x) );
+    CUDA_SAFE_CALL( cudaFree(d_spline_y) );
+    CUDA_SAFE_CALL( cudaFree(d_check_point_idx) );
+    CUDA_SAFE_CALL( cudaFree(d_spline_out) );
     
-    __syncthreads();        
-    b[ti] = 2.0f;
-    a[ti] = ti < n - 1 ? h[ti] / (h[ti] + h[ti +1]) : 1.0f;
-    // c[ti] = h[threadIdx.x+2] / (h[threadIdx.x+1] + h[threadIdx.x +2]);
-    c[ti] = ti < n - 1 ? h[ti +1 ] / (h[ti+1] + h[ti]):0.0f;
-    }
-}
-
-//deprecated
-template <typename T>
-__global__ void _cubic_spline_segment(const T* x,const T* y ,const T* m,const T* h,const T* spline_x,T* spline_y, int segment_len){
-    int ti = blockIdx.x * blockDim.x + threadIdx.x;
-    if ( ti >= segment_len)
-        return;
-
-    float temp1 = x[1] - spline_x[ti];
-    float temp2 = spline_x[ti] - x[0];
-    spline_y[ti] = m[0] * powf(temp1,3) / (6 * h[0])
-    + m[1] * powf(temp2,3) / (6*h[0])
-    + (y[0] - m[0]*powf(h[0],2)/6) * (temp1) / h[0]
-    + (y[1] - m[1]*powf(h[0],2)/6) * (temp2) / h[0]
-    ;
-}
-
-template <typename T>
-__global__ void _cubic_spline(const T* x,T* y,const int* check_point_idx,const T* m,const T* h,int totalSize){
-    //grid-stride
-    for( int i = blockIdx.x; i < totalSize; i += gridDim.x){
-        int to_idx = check_point_idx[i];
-        int from_idx = 0;
-        if ( i > 0){
-            from_idx = check_point_idx[i-1];
-        }
-        //block-stride
-        for( int j = from_idx + threadIdx.x + 1; j < to_idx; j += blockDim.x){
-            y[j] = m[i-1] * powf(x[to_idx] - x[j],3) / (6*h[i])
-                + m[i] * powf(x[j] - x[from_idx],3) / (6*h[i])
-                + (y[from_idx] - m[i-1] * powf(h[i],2)/6) * (x[to_idx] - x[j]) / h[i]
-                + (y[to_idx] - m[i] * powf(h[i],2)/6) * (x[j] - x[from_idx]) / h[i]
-                ;
-        }
-
-    }
-}
-template <typename T>
-__global__ void _cubic_spline2(const T* x,T* y,const int* check_point_idx,const T* m,const T* h,int totalSize)
-{
-    for ( int i = threadIdx.x; i < totalSize; i += blockDim.x)
-    {
-        int to_idx = check_point_idx[i];
-        int from_idx = 0;
-        if ( i > 0 ){
-            from_idx = check_point_idx[i -1 ];
-        }
-
-        for( int j = from_idx + blockIdx.x + 1; j < to_idx; j+= gridDim.x)
-        {
-            y[j] = m[i-1] * powf(x[to_idx] - x[j],3) / (6*h[i])
-                + m[i] * powf(x[j] - x[from_idx],3) / (6*h[i])
-                + (y[from_idx] - m[i-1] * powf(h[i],2)/6) * (x[to_idx] - x[j]) / h[i]
-                + (y[to_idx] - m[i] * powf(h[i],2)/6) * (x[j] - x[from_idx]) / h[i]
-                ;   
-        }
-    }
-}
-
-template <typename T>
-void preparing_parameters_gpu(
-    T* d_a,
-    T* d_b,
-    T* d_c,
-    T* d_d,
-    const T* d_x,
-    T* d_diff,
-    const T* d_y,
-    const int* d_check_point_idx,
-    const int len,
-    const int systemSize,
-    const int numOfSystem
-    )
-{
-    if(systemSize * numOfSystem < len){
-        println("invalid systemSize:%d and numOfSystem:%d parameter, less than total size:%d",systemSize,numOfSystem,len);
-        return;
-    }
-    
-    _prepare_systems<T><<<28*4,1024>>>(d_a,d_b,d_c,d_d,d_x,d_y,d_check_point_idx,d_diff,len);
-}
-
-template <typename T>
-void preparing_parameters_cpu(
-    T* a,
-    T* b,
-    T* c,
-    T* d,
-    const T* x,
-    T* diff,
-    const T* y,
-    const int * check_point_idx,
-    const int len,
-    const int systemSize,
-    const int numOfSystem
-    )
-{
-    diff[0] = 0.0f;
-    for(int i =1;i<len;i++)
-    {
-        diff[i] = x[check_point_idx[i] ] - x[check_point_idx[i-1]];
-    }
-
-    for(int s=0;s<numOfSystem;s++)
-    {
-        int base = s*systemSize;
-        float* sub_b = b + base;
-        float* sub_a = a + base;
-        float* sub_c = c + base;
-        float* sub_d = d + base;
-        float* sub_diff = diff + base;
-        // const float* sub_x = x + base;
-        const int* sub_x_idx = check_point_idx + base;
-        const float* sub_y = y + base;
-
-        int last = len -1;
-        for(int i=0;i<systemSize && i+base < len;i++)
-        {
-
-            sub_b[i] = 2.0f;
-            if( i + base ==0){
-                sub_a[i] = 0.0f;
-                sub_c[i] = 1.0f;
-                sub_d[i] = 6.0f*(y[sub_x_idx[1]] - y[sub_x_idx[0]])/(x[sub_x_idx[1]] - x[sub_x_idx[0]])/ (x[sub_x_idx[1]] - x[sub_x_idx[0]]);
-                // sub_d[i] = 0.0f;
-            }else if (i + base < last){
-                sub_a[i] = sub_diff[i] / (sub_diff[i] + sub_diff[i+1]);
-                sub_c[i] = sub_diff[i+1] / (sub_diff[i] + sub_diff[i+1]);
-                sub_d[i] = 0.0f;
-                // println("=============================");
-                for(int j=0;j<3;j++){
-                    sub_d[i] += 6.0f * y[sub_x_idx[i-1 + j]] / (x[sub_x_idx[i-1 + j]] - x[sub_x_idx[i-1 + (j+1)%3]]) / (x[sub_x_idx[i-1+j]] - x[sub_x_idx[i-1 + (j+2)%3]]);
-                    // printf("y[%d] / (x[%d] - x[%d]) / (x[%d] - x[%d])\n",i-1+j,i-1+j,i-1+(j+1)%3,i-1+j,i-1+(j+2)%3);
-                }
-                // printf("=============================\n");
-                // println("=============================");
-
-            }else{
-                // println("last i=%d y[i]=%f y[i-1]=%f",i,y[i],y[i-1]);
-                sub_d[i] = 6.0f * (0.0f - (y[sub_x_idx[i]] - y[sub_x_idx[i-1]])/(x[sub_x_idx[i]] - x[sub_x_idx[i-1]]) ) / (x[sub_x_idx[i]] - x[sub_x_idx[i-1]]);
-                // sub_d[i] = 0.0f;
-                // printf("last element:%d@%f\n",i,sub_d[i]);
-                sub_a[i] = 1.0f;
-                sub_c[i] = 0.0f;
-
-            }
-
-            if(sub_d[i] != sub_d[i]){
-                println("d[i+base] = %f, i+base=%d,i=%d",sub_d[i],i+base,i);
-            }
-        }
-    }
-
 }
 
 void testing(int len,int SYSTEM_SIZE){
@@ -400,11 +262,13 @@ void testing(int len,int SYSTEM_SIZE){
     int segment_end = 1;
     int offset = 0;
     int residual = 0;
+    int counter[2];
 
 
 
     cudpp_app::StopWatch timer;
     
+
 
 
     float * d_a;
@@ -417,6 +281,10 @@ void testing(int len,int SYSTEM_SIZE){
     float * d_diff;
     float * d_spline_x;
     float * d_spline_y;
+    float * d_spline_x_diff;
+    int * d_maxima;
+    int * d_minima;
+    int * d_counter;
     float * d_m;
 
     /*
@@ -431,6 +299,8 @@ void testing(int len,int SYSTEM_SIZE){
     // CUDA_SAFE_CALL( cudaMalloc( (void**) &d_m,memSize));
     CUDA_SAFE_CALL( cudaMalloc( (void**) &d_diff,memSize));
     CUDA_SAFE_CALL( cudaMalloc( (void**) &d_check_point_idx,memSize) );
+    CUDA_SAFE_CALL( cudaMalloc( (void**) &d_counter,2*sizeof(int)) );
+
 
 
     CUDA_SAFE_CALL( cudaMemset(d_a,0,memSize) );
@@ -438,6 +308,7 @@ void testing(int len,int SYSTEM_SIZE){
     CUDA_SAFE_CALL( cudaMemset(d_c,0,memSize) );
     CUDA_SAFE_CALL( cudaMemset(d_d,0,memSize) );
     CUDA_SAFE_CALL( cudaMemset(d_diff,0,memSize) );
+    CUDA_SAFE_CALL( cudaMemset(d_counter,0,2 * sizeof(int)) );
 
     
     int * x = (int*) malloc(len * sizeof(int));
@@ -461,6 +332,9 @@ For Testing
     float * h = (float*) malloc(memSize);
     float * m = (float*) malloc(memSize);
 
+    int * maxima;
+    int * minima;
+
     
 
     AddressPair_F addressPairs[] = {
@@ -477,6 +351,9 @@ Fake data
     spline_len = (len -1) * 20 + 1;
     spline_x = (float*) malloc(spline_len * sizeof(float));
     spline_y = (float*) malloc(spline_len * sizeof(float));
+    maxima = (int*) malloc((spline_len >> 1) * sizeof(int));
+    minima = (int*) malloc((spline_len >> 1) * sizeof(int));
+
     memset(spline_y,0,spline_len * sizeof(float));
 
     for(int i=0;i<spline_len;i++){
@@ -495,13 +372,18 @@ Fake data
 
     CUDA_SAFE_CALL( cudaMalloc( (void**) &d_spline_x,spline_len*sizeof(float)));
     CUDA_SAFE_CALL( cudaMalloc( (void**) &d_spline_y,spline_len*sizeof(float)));
+    CUDA_SAFE_CALL( cudaMalloc( (void**) &d_spline_x_diff,spline_len*sizeof(float)));
+    CUDA_SAFE_CALL( cudaMalloc( (void**) &d_maxima,(spline_len>>1)*sizeof(int)));
+    CUDA_SAFE_CALL( cudaMalloc( (void**) &d_minima,(spline_len>>1)*sizeof(int)));
 
+    CUDA_SAFE_CALL( cudaMemset(d_maxima,-1,(spline_len>>1) * sizeof(int)));
+    CUDA_SAFE_CALL( cudaMemset(d_minima,-1,(spline_len>>1) * sizeof(int)));
 
     CUDA_SAFE_CALL( cudaMemcpy( d_spline_x, spline_x, spline_len * sizeof(float), cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL( cudaMemcpy( d_spline_y, spline_y, spline_len * sizeof(float), cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL( cudaMemcpy( d_check_point_idx, x, memSize, cudaMemcpyHostToDevice));
 
-
+    // printArray(spline_x,spline_len);
 #if defined(USE_CUDPP)
     result = cudppCreate(&theCudpp);
     if(result != CUDPP_SUCCESS)
@@ -510,6 +392,9 @@ Fake data
         goto end;
     }
 #endif
+
+
+    
 
     /* ================================
     GPU preparing parameters
@@ -549,7 +434,7 @@ Fake data
 
 #endif
     
-    /*
+    
     printArray(a,len);
     printArray(a2,len);
     printArray(b,len);
@@ -558,7 +443,9 @@ Fake data
     printArray(c2,len);
     printArray(d,len);
     printArray(d2,len);
-    */
+    printArrayFmt(x,len,%d);
+    printArray(spline_x,spline_len);
+    printArray(spline_y,spline_len);
     // printArray(y,len);
 
 /*============================
@@ -588,7 +475,7 @@ Fake data
     }
     println("solve tridiagonal system cost:%f ms",timer.getTime());
     CUDA_SAFE_CALL( cudaMemcpy( m, d_m, memSize, cudaMemcpyDeviceToHost));
-    //printArray(m,len);
+    printArray(m,len);
 #endif
 
 #if defined(USE_CUDPP)
@@ -686,7 +573,7 @@ Fake data
     println("before spline");       
     // printArray(spline_y,spline_len);
     // printArrayFmt(x,len,%d);
-    _cubic_spline2<<< 28,SYSTEM_SIZE>>>(d_spline_x,d_spline_y,d_check_point_idx,d_m,d_diff,len);
+    _cubic_spline2<<< 28,SYSTEM_SIZE>>>(d_spline_x,d_spline_y,d_spline_y,d_check_point_idx,d_m,d_diff,len);
     cudaThreadSynchronize();
     timer.stop();
     println("gpu cubic spline costs: %f",timer.getTime());
@@ -763,6 +650,27 @@ CPU Cubic Spline Interplation
     
     println("errors: \na:%f \nb:%f\nc:%f\nd:%f\nm:%f",a_error,b_error,c_error,d_error,m_error);
     
+
+    // timer.reset();
+    // timer.start();
+    // _diff<float><<<28*2,512 >>>(d_spline_y,d_spline_x_diff,spline_len);
+    // CUDA_SAFE_CALL( cudaMemset(d_counter,0,2 * sizeof(int)) );
+    // _extrema<float> <<< 28*2,512>>>(d_spline_x_diff,spline_len,d_maxima,d_minima,d_counter);
+    // cudaThreadSynchronize();
+    // timer.stop();
+
+    // CUDA_SAFE_CALL( cudaMemcpy(counter,d_counter,(2) * sizeof(int),cudaMemcpyDeviceToHost) );
+    // printArrayFmt(counter,2,%d);
+
+
+    // println("_diff kernel costs:%f",timer.getTime());
+    // CUDA_SAFE_CALL( cudaMemcpy(maxima,d_maxima,(spline_len>>1) * sizeof(int),cudaMemcpyDeviceToHost) );
+    // CUDA_SAFE_CALL( cudaMemcpy(minima,d_minima,(spline_len>>1) * sizeof(int),cudaMemcpyDeviceToHost) );
+    // CUDA_SAFE_CALL( cudaMemcpy(spline_y,d_spline_x_diff,(spline_len) * sizeof(int),cudaMemcpyDeviceToHost) );
+    // printArrayFmt(maxima,spline_len>>1,%d);
+    printArray(spline_y,spline_len);
+
+
     // printArray(spline_x,spline_len);
     // printArray(spline_y,spline_len);
     // printArrayFmt(x,len,%d);
@@ -789,6 +697,9 @@ end:
     free(h2);
     free(m2);
 
+    free(maxima);
+    free(minima);
+
     free(x);
     free(y);
     free(spline_x);
@@ -804,6 +715,12 @@ end:
     CUDA_SAFE_CALL(cudaFree(d_diff));
     CUDA_SAFE_CALL(cudaFree(d_spline_x));
     CUDA_SAFE_CALL(cudaFree(d_spline_y));
+    CUDA_SAFE_CALL(cudaFree(d_spline_x_diff));
+    CUDA_SAFE_CALL(cudaFree(d_maxima));
+    CUDA_SAFE_CALL(cudaFree(d_minima));
+    CUDA_SAFE_CALL(cudaFree(d_counter));
+
+
 
 
 }
