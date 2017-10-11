@@ -23,11 +23,11 @@
 
 #define USE_CUSPARSE   true
 // includes, project
-#if defined(USE_CUDPP)
+// #if defined(USE_CUDPP)
 #include "cudpp.h"
-#elif defined(USE_CUSPARSE)
+// #elif defined(USE_CUSPARSE)
 #include "cusparse.h"
-#endif
+// #endif
 
 #include <cuda_runtime_api.h>
 #include "cuda_util.h"
@@ -94,6 +94,103 @@ void testCusparse(){
 
 }
 #endif
+
+
+void testMergeSort(){
+    CUDPPConfiguration config;
+    config.algorithm = CUDPP_SORT_RADIX;
+    config.datatype = CUDPP_UINT;
+    config.options = CUDPP_OPTION_KEYS_ONLY;
+    CUDPPResult result = CUDPP_SUCCESS;  
+    CUDPPHandle theCudpp;
+    CUDPPHandle plan; 
+    int test[]  = { 1,5,20,2,600,30};
+    int * d_test = NULL;
+    int * d_values = NULL;
+    result = cudppCreate(&theCudpp);
+    result = cudppPlan(theCudpp,&plan,config,10,1,0);
+
+    automallocD(d_test,10,int);
+    automallocD(d_values,10,int);
+    CUDA_SAFE_CALL( cudaMemcpy(d_test,test,6 * sizeof(int),cudaMemcpyHostToDevice) );
+
+    result =  cudppRadixSort(plan, d_test, NULL, 6);
+    if( result != CUDPP_SUCCESS){
+        println("error in merge sort");
+    }
+    cudaThreadSynchronize();
+    CUDA_SAFE_CALL( cudaMemcpy(test,d_test,6 * sizeof(int),cudaMemcpyDeviceToHost) );
+    printArrayFmt(test,6,%d);
+
+    autofreeD(d_test);
+    cudppDestroyPlan(plan);
+    cudppDestroy(theCudpp);
+
+}
+
+void testSum(){
+    // int data[] = {7,2,3,4,5};
+    float data[] = {
+1.000000, 1.001534, 1.006192, 1.014093, 1.025414, 1.040391, 1.059334, 1.082637, 1.110798, 1.144443,
+1.184355, 1.231522, 1.287195, 1.352969, 1.430900, 1.523672, 1.634833, 1.769163, 1.933214, 2.136175,
+2.391275, 2.718141, 3.146970, 3.726274, 4.538268, 5.731900, 7.601384, 10.799616, 17.037558, 32.133091,
+88.189651, 962.687073, 459.412811, 58.715717, 20.718317, 10.099625, 5.781237, 3.642375, 2.445008, 1.716237,
+1.244916, 0.925744, 0.701687, 0.539801, 0.420056, 0.329745, 0.260522, 0.206739, 0.164474, 0.130944,
+0.104136, 0.082568, 0.065135, 0.050998, 0.039517, 0.030196, 0.022649, 0.016570, 0.011720, 0.007907,
+0.004978, 0.002812, 0.001311, 0.000400, 0.000019, 0.000121, 0.000675, 0.001664, 0.003083, 0.004944,
+0.007269, 0.010100, 0.013495, 0.017536, 0.022330, 0.028023, 0.034805, 0.042930, 0.052740, 0.064697,
+0.079438, 0.097860, 0.121249, 0.151506, 0.191520, 0.245858, 0.322068, 0.433334, 0.604356, 0.885793,
+1.395234, 2.458854, 5.280423, 17.603279, 458.042633, 50.944889, 9.615420, 3.988515, 2.194571, 1.398465,
+0.975213, 0.722858, 0.559960, 0.448493, 0.368742, 0.309638, 0.264574, 0.229402, 0.201408, 0.178756,
+0.160166, 0.144724, 0.131762, 0.120783, 0.111411, 0.103357, 0.096396, 0.090350, 0.085079, 0.080471,
+0.076433, 0.072891, 0.069786, 0.067066, 0.064693, 0.062631, 0.060856, 0.059345, 0.058082, 0.057055,
+0.056255, 0.055678, 0.055324, 0.055197, 0.055305, 0.055662, 0.056288, 0.057210, 0.058465, 0.060101,
+0.062185, 0.064801, 0.068067, 0.072139, 0.077236, 0.083669, 0.091885, 0.102557, 0.116731, 0.136108,
+0.163621, 0.204698, 0.270392, 0.386333, 0.624412, 1.260242, 4.300251, 726.236511, 4.991086, 1.051353,
+0.416455, 0.211455, 0.122681, 0.077344, 0.051598, 0.035857, 0.025696, 0.018859, 0.014107, 0.010717,
+0.008247, 0.006415, 0.005037, 0.003988, 0.003181, 0.002556, 0.002067, 0.001684, 0.001382, 0.001144,
+0.000955, 0.000806, 0.000689, 0.000598, 0.000527, 0.000474, 0.000435, 0.000410, 0.000396, 0.000393,
+0.000402, 0.000422, 0.000455, 0.000502, 0.000565, 0.000648, 0.000755, 0.000892, 0.001066, 0.001286,
+0.001566, 0.001922, 0.002377, 0.002960, 0.003713, 0.004693, 0.005983, 0.007698, 0.010014, 0.013193,
+0.017654, 0.024075, 0.033625, 0.048428, 0.072657, 0.115361, 0.199078, 0.392766, 0.994788, 4.770679,
+551.039795, 3.964813, 1.170807, 0.581505, 0.360130, 0.252133, 0.190864, 0.152518, 0.126811, 0.108687,
+0.095415, 0.085408, 0.077692, 0.071639, 0.066828, 0.062972, 0.059865, 0.057360, 0.055348, 0.053747,
+0.052497, 0.051551, 0.050874, 0.050439, 0.050227, 0.050223, 0.050419, 0.050809, 0.051392, 0.052168,
+0.053144, 0.054328, 0.055731, 0.057371, 0.059267, 0.061445, 0.063938, 0.066784, 0.070031, 0.073738,
+0.077975, 0.082833, 0.088420, 0.094877, 0.102379, 0.111152, 0.121489, 0.133779, 0.148540, 0.166483,
+0.188601, 0.216314, 0.251721, 0.298023, 0.360315, 0.447111, 0.573563, 0.768854, 1.095411, 1.707999,
+3.085589, 7.406201, 39.441910, 319.908752, 12.883609, 3.850798, 1.778736, 0.999404, 0.627488, 0.422916,
+0.299216, 0.219168, 0.164660, 0.126040, 0.097796, 0.076600, 0.060353, 0.047677, 0.037644, 0.029608,
+0.023114, 0.017831, 0.013519, 0.010001, 0.007144, 0.004850, 0.003049, 0.001691, 0.000740, 0.000179,
+0.000000, 0.000210, 0.000826, 0.001879, 0.003410, 0.005480, 0.008162, 0.011550, 0.015755, 0.020917,
+0.027207, 0.034840, 0.044083, 0.055271, 0.068829, 0.085301, 0.105386, 0.129995, 0.160331, 0.197999,
+0.245178, 0.304874, 0.381319, 0.480595, 0.611685, 0.788238, 1.031759, 1.377588, 1.886829, 2.672290,
+3.959980, 6.256157, 10.887075, 22.273178, 63.125969, 501.552368, 973.458435, 91.533119, 33.411629, 17.696648,
+11.196737, 7.864154, 5.916808, 4.674214, 3.829395, 3.227066, 2.781438, 2.441910, 2.177039, 1.966341,
+1.796056, 1.656603, 1.541153, 1.444745, 1.363674, 1.295156, 1.237047, 1.187682, 1.145764, 1.110259,
+1.080350, 1.055381, 1.034827, 1.018273, 1.005386, 0.995911, 0.989653, 0.986472, 0.986279, 0.989683,
+1.000000
+    };
+    int len = 381;
+    float gpu_res = float();
+    float cpu_res = float();
+    float * d_data = NULL;
+for(int j=1;j<len;j++){
+    automallocD(d_data,j,float);
+    CUDA_SAFE_CALL( cudaMemcpy(d_data,data,j* sizeof(float),cudaMemcpyHostToDevice) );
+    gpu_res = sum<float,28,512>(d_data,j);
+    cpu_res = data[0];
+    for(int i =1;i<j;i++)
+    {
+        cpu_res += data[i];
+    }
+
+    println("gpu sum error = %f,res = %f",(gpu_res - cpu_res) / cpu_res,gpu_res);
+
+    autofreeD(d_data);
+}
+
+}
 ////////////////////////////////////////////////////////////////////////////////
 // Program main
 ////////////////////////////////////////////////////////////////////////////////
@@ -138,6 +235,8 @@ main( int argc, char** argv)
     // cubicSpline();
     // testing(512,16);
     testCases();
+    // testMergeSort();
+    // testSum();
 }
 
 //cuda kernel's thread and block can not expand without limit. So, can not only using num of block and thread 
@@ -157,10 +256,10 @@ void testCases(){
         512 //system size,  the size of a single system. determin the num of threads. < segment size(20)
     );
 
-    testing(
-        20,
-        512
-    );
+    // testing(
+    //     20,
+    //     512
+    // );
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -185,8 +284,10 @@ void testing2(int len,int SYSTEM_SIZE){
 
     float * d_diff;
     float * d_spline_x;
-    float * d_spline_y;
+    // float * d_spline_y;
     float * d_spline_out;
+    float * d_residual;
+    float * d_prev;
     int * d_check_point_idx;
 
     float * spline_x;
@@ -206,26 +307,44 @@ void testing2(int len,int SYSTEM_SIZE){
 
     generateFakeData(spline_x,spline_y,spline_len,check_points,len);
 
-    CUDA_SAFE_CALL( cudaMalloc( (void**) &d_diff,spline_len * sizeof(float)));
-    CUDA_SAFE_CALL( cudaMalloc( (void**) &d_spline_x,spline_len * sizeof(float)));
-    CUDA_SAFE_CALL( cudaMalloc( (void**) &d_spline_y,spline_len * sizeof(float)));
-    CUDA_SAFE_CALL( cudaMalloc( (void**) &d_spline_out,spline_len * sizeof(float)));
-    CUDA_SAFE_CALL( cudaMalloc( (void**) &d_check_point_idx,memSize));
+    automallocD(d_diff,spline_len,float);
+    // automallocD(d_spline_y,spline_len,float);
+    automallocD(d_spline_x,spline_len,float);
+    automallocD(d_residual,spline_len,float);
+    automallocD(d_prev,spline_len,float);
+    automallocD(d_spline_out,spline_len,float);
+    automallocD(d_check_point_idx,len,int);
+
+
+
+    // CUDA_SAFE_CALL( cudaMalloc( (void**) &d_diff,spline_len * sizeof(float)));
+    // CUDA_SAFE_CALL( cudaMalloc( (void**) &d_spline_x,spline_len * sizeof(float)));
+    // CUDA_SAFE_CALL( cudaMalloc( (void**) &d_spline_y,spline_len * sizeof(float)));
+    // CUDA_SAFE_CALL( cudaMalloc( (void**) &d_spline_out,spline_len * sizeof(float)));
+    // CUDA_SAFE_CALL( cudaMalloc( (void**) &d_check_point_idx,memSize));
 
     CUDA_SAFE_CALL( cudaMemcpy( d_spline_x, spline_x, spline_len * sizeof(float), cudaMemcpyHostToDevice));
-    CUDA_SAFE_CALL( cudaMemcpy( d_spline_y, spline_y, spline_len * sizeof(float), cudaMemcpyHostToDevice));
-    CUDA_SAFE_CALL( cudaMemcpy( d_check_point_idx, check_points, memSize, cudaMemcpyHostToDevice));
+    // CUDA_SAFE_CALL( cudaMemcpy( d_spline_y, spline_y, spline_len * sizeof(float), cudaMemcpyHostToDevice));
+    // CUDA_SAFE_CALL( cudaMemcpy( d_residual, spline_y, spline_len * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_SAFE_CALL( cudaMemcpy( d_prev, spline_y, spline_len * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_SAFE_CALL( cudaMemcpy( d_check_point_idx, check_points, len * sizeof(int), cudaMemcpyHostToDevice));
 
     printArrayFmt(check_points,len,%d);
     printArray(spline_x,spline_len);
     // _diff<float><<<28*2,512 >>>(d_spline_y,d_diff,spline_len);
 
-    cubic_spline_gpu<float,512>(d_spline_x,d_spline_y,d_spline_out,spline_len,d_check_point_idx,len);
+    // cubic_spline_gpu<float,512>(d_spline_x,d_spline_y,d_spline_out,spline_len,d_check_point_idx,len);
 
-    CUDA_SAFE_CALL( cudaMemcpy( spline_out, d_spline_out, spline_len * sizeof(float), cudaMemcpyDeviceToHost));
+    // CUDA_SAFE_CALL( cudaMemcpy( spline_out, d_spline_out, spline_len * sizeof(float), cudaMemcpyDeviceToHost));
 
-    printArray(spline_out,spline_len);
+    // printArray(spline_out,spline_len);
+    // printArray(spline_y,spline_len);
+
+    // sifting<float>(d_prev,spline_len,d_residual);
     printArray(spline_y,spline_len);
+
+    emd<float>(d_prev,spline_len);
+
 
 finally:
     free(spline_x);
@@ -234,9 +353,11 @@ finally:
     free(check_points);
     CUDA_SAFE_CALL( cudaFree(d_diff) );
     CUDA_SAFE_CALL( cudaFree(d_spline_x) );
-    CUDA_SAFE_CALL( cudaFree(d_spline_y) );
+    // CUDA_SAFE_CALL( cudaFree(d_spline_y) );
     CUDA_SAFE_CALL( cudaFree(d_check_point_idx) );
     CUDA_SAFE_CALL( cudaFree(d_spline_out) );
+    autofreeD(d_residual);
+    autofreeD(d_prev);
     
 }
 
@@ -573,7 +694,7 @@ Fake data
     println("before spline");       
     // printArray(spline_y,spline_len);
     // printArrayFmt(x,len,%d);
-    _cubic_spline2<<< 28,SYSTEM_SIZE>>>(d_spline_x,d_spline_y,d_spline_y,d_check_point_idx,d_m,d_diff,len);
+    // _cubic_spline2<<< 28,SYSTEM_SIZE>>>(d_spline_x,d_spline_y,d_spline_y,d_check_point_idx,d_m,d_diff,len);
     cudaThreadSynchronize();
     timer.stop();
     println("gpu cubic spline costs: %f",timer.getTime());
