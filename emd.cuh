@@ -49,7 +49,7 @@ void emd(T * idata,T** imfs,const unsigned int len,unsigned int max_num_of_imf)
 #ifdef DEBUG
 		println("h_%d, sd=%f",rounds++,res);
 #endif
-	} while (res > 1e-2);
+	} while (res > 1e-5);
 
 #ifdef DEBUG
 	println("got one imf");
@@ -91,7 +91,7 @@ void sifting(T * d_data,T * d_h,const int len)
 	CUDPPConfiguration config;
     config.algorithm = CUDPP_SORT_RADIX;
     config.datatype = CUDPP_UINT;
-    config.options = CUDPP_OPTION_KEYS_ONLY;
+    config.options = CUDPP_OPTION_KEY_VALUE_PAIRS;
     CUDPPResult result = CUDPP_SUCCESS;  
     CUDPPHandle theCudpp;
     CUDPPHandle plan;   
@@ -167,11 +167,11 @@ void sifting(T * d_data,T * d_h,const int len)
 	CUDA_SAFE_CALL( cudaMemcpy(d_maxima + counter[0] -1,&temp,(1) * sizeof(int),cudaMemcpyHostToDevice) );	
 	CUDA_SAFE_CALL( cudaMemcpy(d_minima + counter[1] -1,&temp,(1) * sizeof(int),cudaMemcpyHostToDevice) );	
 
-	result =  cudppRadixSort(plan, d_maxima, NULL, counter[0]);
+	result =  cudppRadixSort(plan, d_maxima, d_maxima_y, counter[0]);
 	if( result != CUDPP_SUCCESS){
 		println("error while sort d_maxima");
 	}
-	result = cudppRadixSort(plan, d_minima, NULL, counter[1]);	
+	result = cudppRadixSort(plan, d_minima, d_minima_y, counter[1]);	
 	if( result != CUDPP_SUCCESS){
 		println("error while sort d_minima ");
 	}

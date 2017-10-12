@@ -270,7 +270,7 @@ void generateFakeData(T* data_x,T* data_y,int len,int * check_points,int check_p
 {
     for(int i =0;i< len;i++)
     {
-        data_x[i] = ((float)i) * 0.05;
+        data_x[i] = ((float)i);
         // data_y[i] = 1e3 * cos(PI * powf(data_x[i]*1e-4,2))* sin(PI * 1e-4 * data_x[i]) + powf(1e-3*data_x[i],1.5);
         data_y[i] = 1e3 * cos(PI * powf(data_x[i]*2e-1,2))* sin(PI * 2e-1* data_x[i]) + powf(data_x[i],1.5);
 
@@ -282,7 +282,7 @@ void generateFakeData(T* data_x,T* data_y,int len,int * check_points,int check_p
     }
 }
 
-void testing2(int len,int SYSTEM_SIZE){
+void testing2(int spline_len,int SYSTEM_SIZE){
 
     float * d_diff;
     float * d_spline_x;
@@ -299,7 +299,8 @@ void testing2(int len,int SYSTEM_SIZE){
 
     int * check_points;
 
-    int spline_len = (len -1) * 20 + 1;
+    // int spline_len = (len -1) * 20 + 1;
+    int len = spline_len / 20;
     float** imfs = NULL;
     int memSize = len * sizeof(float);
     int error = 0;
