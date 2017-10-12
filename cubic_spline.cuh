@@ -56,7 +56,7 @@ __global__ void _prepare_systems(T* a, T* b, T* c, T* d, const T* x, const T* y,
 }
 
 template <typename T>
-__global__ void _prepare_systems(T* a,T* b,T* c,T* d,const T* y,const int* check_point_idx,T* h,const int n)
+__global__ void _prepare_systems(T* a,T* b,T* c,T* d,const int* check_point_idx,const T* y,T* h,const int n)
 {
     int ti_base = blockIdx.x * blockDim.x + threadIdx.x;
     // __shared__ T h[blockDim+2];
@@ -72,7 +72,7 @@ __global__ void _prepare_systems(T* a,T* b,T* c,T* d,const T* y,const int* check
     if(ti == 0){
         //head
 
-        d[ti] = 6.0f*(y[check_point_idx[1]] - y[check_point_idx[0]])/(check_point_idx[1] - check_point_idx[0])/ (check_point_idx[1] - check_point_idx[0]);
+        d[ti] = 6.0f*(y[1] - y[0])/(check_point_idx[1] - check_point_idx[0])/ (check_point_idx[1] - check_point_idx[0]);
         h[ti] = 0.0f;
     }else if (ti < n -1){
         //middle
@@ -87,14 +87,14 @@ __global__ void _prepare_systems(T* a,T* b,T* c,T* d,const T* y,const int* check
         */
         
         for(int j=0;j<3;j++){
-            d[ti] += 6.0f * y[check_point_idx[ti-1 + j]] / (check_point_idx[ ti-1 + j] - check_point_idx[ti-1 + (j+1)%3]) / (check_point_idx[ ti-1+j] - check_point_idx[ti-1 + (j+2)%3]);
+            d[ti] += 6.0f * y[ti-1 + j] / (check_point_idx[ ti-1 + j] - check_point_idx[ti-1 + (j+1)%3]) / (check_point_idx[ ti-1+j] - check_point_idx[ti-1 + (j+2)%3]);
         }
         h[ti] = check_point_idx[ti] - check_point_idx[ti-1]; 
         
     }else{
         //last ti = n-1
         
-        d[ti] = 6.0f * (0.0f - (y[check_point_idx[ ti]] - y[check_point_idx[ti-1]])/(check_point_idx[ti] - check_point_idx[ti-1]) ) / (check_point_idx[ti] - check_point_idx[ti-1]);
+        d[ti] = 6.0f * (0.0f - (y[ti] - y[ti-1])/(check_point_idx[ti] - check_point_idx[ti-1]) ) / (check_point_idx[ti] - check_point_idx[ti-1]);
         h[ti] = check_point_idx[ ti] - check_point_idx[ti-1];
     }
 
@@ -184,29 +184,27 @@ __global__ void _cubic_spline2(const T* x,const T* y,T* spline_out,const T* m,co
 }
 
 template <typename T>
-__global__ void _cubic_spline2(const T* y,T* spline_out,const int* check_point_idx,const T* m,const T* h,int totalSize)
+__global__ void _cubic_spline2(const int* check_point_idx,const T* y,T* spline_out,const T* m,const T* h,int totalSize)
 {
     for ( int i = threadIdx.x; i < totalSize; i += blockDim.x)
     {
         int to_idx = check_point_idx[i];
         int from_idx = 0;
         
-        if ( i > 0 ){
-            from_idx = check_point_idx[i -1 ];
-        }
+        spline_out[to_idx] = y[i];
+        if ( i > 0) {
+            from_idx = check_point_idx[i - 1] ;
+            // spline_out[i - 1] = y[i - 1];
 
+            for ( int j = from_idx + blockIdx.x + 1 ; j < to_idx; j += gridDim.x)
+            {
 
-        spline_out[from_idx] = y[from_idx];
-        spline_out[to_idx] = y[to_idx];
-
-        for( int j = from_idx + blockIdx.x +1 ; j < to_idx; j+= gridDim.x)
-        {            
-            
-            spline_out[j] = m[i-1] * powf(to_idx - j,3) / (6*h[i])
-                + m[i] * powf(j - from_idx,3) / (6*h[i])
-                + (y[from_idx] - m[i-1] * powf(h[i],2)/6) * (to_idx - j) / h[i]
-                + (y[to_idx] - m[i] * powf(h[i],2)/6) * (j - from_idx) / h[i]
-                ;   
+                spline_out[j] = m[i - 1] * powf(to_idx - j, 3) / (6 * h[i])
+                + m[i] * powf(j - from_idx, 3) / (6 * h[i])
+                + (y[i - 1] - m[i - 1] * powf(h[i], 2) / 6) * (to_idx - j) / h[i]
+                + (y[i] - m[i] * powf(h[i], 2) / 6) * (j - from_idx) / h[i]
+                ;
+            }
         }
 
     }
@@ -431,7 +429,7 @@ int cubic_spline_gpu(const T* d_data_x,const T* d_data_y,int check_point_len,T* 
 
 
 template <typename T,int const systemSize>
-int cubic_spline_gpu(const T* d_data_y,T* d_spline_out,const int data_len,const int * d_check_point_idx,const int check_point_len)
+int cubic_spline_gpu(const int * d_check_point_idx,const T* d_data_y,const int check_point_len,T* d_spline_out,const int data_len)
 {
     T * d_a = NULL;
     T * d_b = NULL;
@@ -474,7 +472,7 @@ int cubic_spline_gpu(const T* d_data_y,T* d_spline_out,const int data_len,const 
     
     // preparing_parameters_gpu<T>(d_a,d_b,d_c,d_m,d_data_x,d_diff,d_data_y,d_check_point_idx,check_point_len,
     //     systemSize,numOfBlocks);
-    _prepare_systems<T><<<28*2,512>>>(d_a,d_b,d_c,d_m,d_data_y,d_check_point_idx,d_diff,check_point_len);
+    _prepare_systems<T><<<28*2,512>>>(d_a,d_b,d_c,d_m,d_check_point_idx,d_data_y,d_diff,check_point_len);
     cudaThreadSynchronize();
 #ifdef DEBUG
     CUDA_SAFE_CALL( cudaMemcpy(m,d_m, memSize,cudaMemcpyDeviceToHost) );
@@ -521,7 +519,7 @@ int cubic_spline_gpu(const T* d_data_y,T* d_spline_out,const int data_len,const 
         goto finalize;
     }
     
-    _cubic_spline2<T><<< 28*2,systemSize >>>(d_data_y,d_spline_out,d_check_point_idx,d_m,d_diff,check_point_len);
+    _cubic_spline2<T><<< 28*2,systemSize >>>(d_check_point_idx,d_data_y,d_spline_out,d_m,d_diff,check_point_len);
 
     cudaThreadSynchronize();
 

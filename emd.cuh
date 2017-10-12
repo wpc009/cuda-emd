@@ -11,7 +11,7 @@ void sifting(T * d_data,T * d_h,const int len);
 
 
 template <typename T>
-void emd(T * idata,const unsigned int len)
+void emd(T * idata,T** imfs,const unsigned int len,unsigned int max_num_of_imf)
 {
 	T * d_h = NULL;
 	T * d_last_h = NULL;
@@ -33,7 +33,7 @@ void emd(T * idata,const unsigned int len)
 
 	CUDA_SAFE_CALL( cudaMemcpy(d_last_h,idata,len * sizeof(T),cudaMemcpyDeviceToHost) );
 
-	// do{
+	do{
 		sifting<T>(d_last_h, d_h, len);
 		_sd<T><<< 28 * 2, 512>>>(d_h, d_last_h, d_sd, len);
 		cudaThreadSynchronize();
@@ -49,7 +49,7 @@ void emd(T * idata,const unsigned int len)
 #ifdef DEBUG
 		println("h_%d, sd=%f",rounds++,res);
 #endif
-	// } while (res > 0.01);
+	} while (res > 1e-2);
 
 #ifdef DEBUG
 	println("got one imf");
@@ -57,7 +57,7 @@ void emd(T * idata,const unsigned int len)
 	printArray(imf,len);
 #endif
 
-
+	CUDA_SAFE_CALL( cudaMemcpy(imfs[0],d_last_h,len * sizeof(T),cudaMemcpyDeviceToHost) );
 
 finally:
 #ifdef DEBUG
@@ -73,15 +73,15 @@ finally:
 template <typename T>
 void sifting(T * d_data,T * d_h,const int len)
 {
-	T * d_maxima = NULL;
-	T * d_minima = NULL;
+	int * d_maxima = NULL;
+	int * d_minima = NULL;
 	T* d_maxima_y = NULL;
 	T* d_minima_y = NULL;
 	T* d_diff = NULL;
 	int halflen = (len >> 1) + 2;
 	int * d_counter = NULL;
 	int * counter = NULL;
-	T temp = len -1;
+	int temp = len -1;
 	
 	T* d_top = NULL;
 	T* d_bottom = NULL;
@@ -100,7 +100,7 @@ void sifting(T * d_data,T * d_h,const int len)
 
 
 #ifdef DEBUG
-	T * maxima = NULL;
+	int * maxima = NULL;
 	T * minima = NULL;
 	T * diff = NULL;
 	T* top = NULL;
@@ -109,12 +109,12 @@ void sifting(T * d_data,T * d_h,const int len)
 	automalloc(diff,len,T);
 	automalloc(top,len,T);
 	automalloc(bottom,len,T);
-	automalloc(maxima,halflen,T);
+	automalloc(maxima,halflen,int);
 	automalloc(minima,halflen,T);
 #endif
 	
-	automallocD(d_maxima,halflen,T);
-	automallocD(d_minima,halflen,T);
+	automallocD(d_maxima,halflen,int);
+	automallocD(d_minima,halflen,int);
 	automallocD(d_maxima_y,halflen,T);
 	automallocD(d_minima_y,halflen,T);
 	automallocD(d_diff,len,T); 
@@ -123,8 +123,8 @@ void sifting(T * d_data,T * d_h,const int len)
 	automallocD(d_top,len,T);
 	automallocD(d_bottom,len,T);
 
-	CUDA_SAFE_CALL( cudaMemset(d_maxima,0,(halflen) * sizeof(T)));
-	CUDA_SAFE_CALL( cudaMemset(d_minima,0,(halflen) * sizeof(T)));
+	CUDA_SAFE_CALL( cudaMemset(d_maxima,0,(halflen) * sizeof(int)));
+	CUDA_SAFE_CALL( cudaMemset(d_minima,0,(halflen) * sizeof(int)));
 	CUDA_SAFE_CALL( cudaMemset(d_maxima_y,0,(halflen) * sizeof(T)));
 	CUDA_SAFE_CALL( cudaMemset(d_minima_y,0,(halflen) * sizeof(T)));
 	CUDA_SAFE_CALL( cudaMemset(d_diff,0,(len) * sizeof(T)));
@@ -158,14 +158,14 @@ void sifting(T * d_data,T * d_h,const int len)
 	printArrayFmt(counter,2,%d);
 	println("len:%d",len);
 #endif
-	temp = 0.0;
+	temp = 0;
 	// CUDA_SAFE_CALL( cudaMemset(d_maxima,0,(1) * sizeof(T)));
-	CUDA_SAFE_CALL( cudaMemcpy(d_maxima,&temp,(1) * sizeof(T),cudaMemcpyHostToDevice) );	
-	CUDA_SAFE_CALL( cudaMemcpy(d_minima,&temp,(1) * sizeof(T),cudaMemcpyHostToDevice) );	
+	CUDA_SAFE_CALL( cudaMemcpy(d_maxima,&temp,(1) * sizeof(int),cudaMemcpyHostToDevice) );	
+	CUDA_SAFE_CALL( cudaMemcpy(d_minima,&temp,(1) * sizeof(int),cudaMemcpyHostToDevice) );	
 	// CUDA_SAFE_CALL( cudaMemset(d_maxima + counter[0] + 1,len-1,(1) * sizeof(int)));
 	temp = len -1;
-	CUDA_SAFE_CALL( cudaMemcpy(d_maxima + counter[0] -1,&temp,(1) * sizeof(T),cudaMemcpyHostToDevice) );	
-	CUDA_SAFE_CALL( cudaMemcpy(d_minima + counter[1] -1,&temp,(1) * sizeof(T),cudaMemcpyHostToDevice) );	
+	CUDA_SAFE_CALL( cudaMemcpy(d_maxima + counter[0] -1,&temp,(1) * sizeof(int),cudaMemcpyHostToDevice) );	
+	CUDA_SAFE_CALL( cudaMemcpy(d_minima + counter[1] -1,&temp,(1) * sizeof(int),cudaMemcpyHostToDevice) );	
 
 	result =  cudppRadixSort(plan, d_maxima, NULL, counter[0]);
 	if( result != CUDPP_SUCCESS){
@@ -183,14 +183,14 @@ void sifting(T * d_data,T * d_h,const int len)
 	cudaThreadSynchronize();
 
 #ifdef DEBUG
-	CUDA_SAFE_CALL( cudaMemcpy(maxima,d_maxima,counter[0] * sizeof(T),cudaMemcpyDeviceToHost) );
+	CUDA_SAFE_CALL( cudaMemcpy(maxima,d_maxima,counter[0] * sizeof(int),cudaMemcpyDeviceToHost) );
 	CUDA_SAFE_CALL( cudaMemcpy(minima,d_maxima_y,counter[0] * sizeof(T),cudaMemcpyDeviceToHost) );
-	printArray(maxima,counter[0]);
+	printArrayFmt(maxima,counter[0],%d);
 	printArrayFmtAlias(minima,maxima_y,counter[0],%f);
 
-	CUDA_SAFE_CALL( cudaMemcpy(maxima,d_minima,counter[1] * sizeof(T),cudaMemcpyDeviceToHost) );
+	CUDA_SAFE_CALL( cudaMemcpy(maxima,d_minima,counter[1] * sizeof(int),cudaMemcpyDeviceToHost) );
 	CUDA_SAFE_CALL( cudaMemcpy(minima,d_minima_y,counter[1] * sizeof(T),cudaMemcpyDeviceToHost) );
-	printArrayFmtAlias(maxima,minima,counter[1],%f);
+	printArrayFmtAlias(maxima,minima,counter[1],%d);
 	printArrayFmtAlias(minima,minima_y,counter[1],%f);
 #endif
 
@@ -218,8 +218,8 @@ void sifting(T * d_data,T * d_h,const int len)
 
 #ifdef DEBUG
 	CUDA_SAFE_CALL( cudaMemcpy(top,d_h,len * sizeof(T),cudaMemcpyDeviceToHost) );		
-	println("_residual");
-	printArray(top,len);
+	// println("_residual");
+	printArrayFmtAlias(top,residual,len,%f);
 #endif
 
 finally:

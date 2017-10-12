@@ -252,7 +252,7 @@ void testCases(){
         Case 1. thread stride testing
     */
     testing2(
-        20 , //num of check points, determin the num of segments. < total blocks
+        int(1e2) , //num of check points, determin the num of segments. < total blocks
         512 //system size,  the size of a single system. determin the num of threads. < segment size(20)
     );
 
@@ -271,7 +271,9 @@ void generateFakeData(T* data_x,T* data_y,int len,int * check_points,int check_p
     for(int i =0;i< len;i++)
     {
         data_x[i] = ((float)i) * 0.05;
-        data_y[i] = cos(data_x[i]);
+        // data_y[i] = 1e3 * cos(PI * powf(data_x[i]*1e-4,2))* sin(PI * 1e-4 * data_x[i]) + powf(1e-3*data_x[i],1.5);
+        data_y[i] = 1e3 * cos(PI * powf(data_x[i]*2e-1,2))* sin(PI * 2e-1* data_x[i]) + powf(data_x[i],1.5);
+
     }
 
     for(int i = 0;i<check_points_len;i++)
@@ -293,10 +295,12 @@ void testing2(int len,int SYSTEM_SIZE){
     float * spline_x;
     float * spline_y;
     float * spline_out;
+    
 
     int * check_points;
 
     int spline_len = (len -1) * 20 + 1;
+    float** imfs = NULL;
     int memSize = len * sizeof(float);
     int error = 0;
 
@@ -314,6 +318,9 @@ void testing2(int len,int SYSTEM_SIZE){
     automallocD(d_prev,spline_len,float);
     automallocD(d_spline_out,spline_len,float);
     automallocD(d_check_point_idx,len,int);
+    automalloc(imfs,2,float*);
+    automalloc(imfs[0],spline_len,float);
+    
 
 
 
@@ -329,8 +336,10 @@ void testing2(int len,int SYSTEM_SIZE){
     CUDA_SAFE_CALL( cudaMemcpy( d_prev, spline_y, spline_len * sizeof(float), cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL( cudaMemcpy( d_check_point_idx, check_points, len * sizeof(int), cudaMemcpyHostToDevice));
 
+#ifdef DEBUG
     printArrayFmt(check_points,len,%d);
     printArray(spline_x,spline_len);
+#endif
     // _diff<float><<<28*2,512 >>>(d_spline_y,d_diff,spline_len);
 
     // cubic_spline_gpu<float,512>(d_spline_x,d_spline_y,d_spline_out,spline_len,d_check_point_idx,len);
@@ -341,16 +350,21 @@ void testing2(int len,int SYSTEM_SIZE){
     // printArray(spline_y,spline_len);
 
     // sifting<float>(d_prev,spline_len,d_residual);
+#ifdef DEBUG
     printArray(spline_y,spline_len);
+#endif
 
-    emd<float>(d_prev,spline_len);
+    emd<float>(d_prev,(float**)imfs,spline_len,2);
 
+    printArray(imfs[0],spline_len);
 
 finally:
     free(spline_x);
     free(spline_y);
     free(spline_out);
     free(check_points);
+    free(imfs[0]);
+    free(imfs);
     CUDA_SAFE_CALL( cudaFree(d_diff) );
     CUDA_SAFE_CALL( cudaFree(d_spline_x) );
     // CUDA_SAFE_CALL( cudaFree(d_spline_y) );

@@ -1,7 +1,7 @@
 #ifndef _COMMON_
 #define _COMMON_
 
-#define DEBUG
+// #define DEBUG
 
 #define  autofreeD(buffer) do{ \
 if(buffer != NULL){ CUDA_SAFE_CALL( cudaFree(buffer) ); } \
@@ -32,10 +32,12 @@ if(buffer != NULL){ free(buffer);} \
 
 #define blockalign(x,block_size) (x + (block_size) -1 )/ (block_size)
 
+#define PI 3.1415926
+
 
 
 template <typename T>
-__global__ void _linear_extrapolation(T* d_data,int len,T * maxima,T* maxima_y,int maxima_len,T * minima,T* minima_y,int minima_len)
+__global__ void _linear_extrapolation(T* d_data,int len,int * maxima,T* maxima_y,int maxima_len,int * minima,T* minima_y,int minima_len)
 {
 	int bi = blockIdx.x;
 	int bw = blockDim.x;
@@ -73,8 +75,8 @@ __global__ void _linear_extrapolation(T* d_data,int len,T * maxima,T* maxima_y,i
 			// temp = y1 + (y2 - y1) * (len -1 - x1) / (x2 - x1);
 			// maxima_y[maxima_len-1] = max(temp,d_data[len - 1]);
 		}
-		T x1 = maxima[idx_l];
-		T x2 = maxima[idx_r];
+		T x1 = (T)maxima[idx_l];
+		T x2 = (T)maxima[idx_r];
 		T y1 = maxima_y[idx_l];
 		T y2 = maxima_y[idx_r];
 		temp = y1 + (y2 - y1) * ( maxima[idx_t]- x1) / (x2 - x1);
@@ -108,8 +110,8 @@ __global__ void _linear_extrapolation(T* d_data,int len,T * maxima,T* maxima_y,i
 			// minima_y[minima_len - 1] = min(temp,d_data[len - 1]);
 
 		}
-		T x1 = minima[idx_l];
-		T x2 = minima[idx_r];
+		T x1 = (T) minima[idx_l];
+		T x2 = (T) minima[idx_r];
 		T y1 = minima_y[idx_l];
 		T y2 = minima_y[idx_r];
 		temp = y1 + (y2 - y1) * (minima[idx_t] - x1) / (x2 - x1);
@@ -118,7 +120,7 @@ __global__ void _linear_extrapolation(T* d_data,int len,T * maxima,T* maxima_y,i
 }
 
 template <typename T> 
-__global__ void _extrema(const T* data,const T* diff,int len,T* maxima,T* maxima_y,T* minima,T* minima_y,int* counter)
+__global__ void _extrema(const T* data,const T* diff,int len,int* maxima,T* maxima_y,int* minima,T* minima_y,int* counter)
 {
 	__shared__ int  l_n[2];
 	int bi = blockIdx.x;
@@ -182,10 +184,10 @@ __global__ void _extrema(const T* data,const T* diff,int len,T* maxima,T* maxima
 
 
 		if (isMaxima == 1) {
-			maxima[l_n[0] + pos] = (T)(i - 1);
+			maxima[l_n[0] + pos] = (i - 1);
 			maxima_y[l_n[0] + pos] = data[i -1];
 		} else if (isMaxima == 2) {
-			minima[l_n[1] + pos] = (T)(i - 1);
+			minima[l_n[1] + pos] = (i - 1);
 			minima_y[l_n[1] + pos] = data[i -1];
 		}
 
