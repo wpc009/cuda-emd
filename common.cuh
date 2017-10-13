@@ -11,9 +11,15 @@ if(buffer != NULL){ CUDA_SAFE_CALL( cudaFree(buffer) ); } \
 if(buffer != NULL){ free(buffer);} \
 }while(0)
 
+// #define autofree(buffer) do{ \
+// if(buffer != NULL){ CUDA_SAFE_CALL( cudaFreeHost(buffer)); }\
+// }while(0)
+
 #define printArray(array,len) printArrayFmt(array,len,%f)
 
 #define automalloc(buffer,size,type) buffer = (type*) malloc(size* sizeof(type))
+
+// #define automalloc(buffer,size,type) CUDA_SAFE_CALL( cudaHostAlloc((void**)&buffer ,size * sizeof(type),cudaHostAllocMapped) )
 
 #define automallocD(buffer,size,type) CUDA_SAFE_CALL( cudaMalloc( (void**)&buffer,size * sizeof(type)) )
 
@@ -29,6 +35,8 @@ if(buffer != NULL){ free(buffer);} \
     printf("]\n")
     
 #define println(fmt,...) printf("[%d]"fmt,__LINE__,##__VA_ARGS__);printf("\n")
+
+#define error(fmt,...) fprintf(stderr,fmt,##__VA_ARGS__);fprintf(stderr, "\n")
 
 #define blockalign(x,block_size) (x + (block_size) -1 )/ (block_size)
 
@@ -237,19 +245,19 @@ __global__ void _residual(const T* a,const T* b,T* res,int len){
 	}
 }
 
-template <typename T,unsigned int blockSize>
-__global__ void _reduce_sum(T* g_idata,T* g_odata,unsigned int n)
+template <typename T,int blockSize>
+__global__ void _reduce_sum(T* g_idata,T* g_odata,int n)
 {
 	extern __shared__ T sdata[];
-	unsigned int tid = threadIdx.x;
-	unsigned int i = blockIdx.x*blockDim.x + tid; 
+	int tid = threadIdx.x;
+	int i = blockIdx.x*blockDim.x + tid; 
 	if( i >= n)
 		return;
 
 	sdata[tid] = g_idata[i];
 	__syncthreads();
 
-	for(unsigned int s = 1;s < blockDim.x; s*=2)
+	for(int s = 1;s < blockDim.x; s*=2)
 	{
 		if( tid % (2*s) == 0 && tid + s < n)
 		{
@@ -262,12 +270,12 @@ __global__ void _reduce_sum(T* g_idata,T* g_odata,unsigned int n)
 
 }
 
-template <typename T,unsigned int blockSize>
-__global__ void _reduce6_sum(T *g_idata,T *g_odata, unsigned int n) {
+template <typename T,int blockSize>
+__global__ void _reduce6_sum(T *g_idata,T *g_odata,  int n) {
 	extern __shared__ T sdata[];
-	unsigned int tid = threadIdx.x;
-	unsigned int i = blockIdx.x*(blockSize*2) + tid; 
-	unsigned int gridSize = blockSize*2*gridDim.x; sdata[tid] = 0;
+	int tid = threadIdx.x;
+	int i = blockIdx.x*(blockSize*2) + tid; 
+	int gridSize = blockSize*2*gridDim.x; sdata[tid] = 0;
 
 	while (i < n) { 
 		sdata[tid] += g_idata[i] + g_idata[i+blockSize]; 
@@ -288,11 +296,11 @@ __global__ void _reduce6_sum(T *g_idata,T *g_odata, unsigned int n) {
 	if (tid == 0) g_odata[blockIdx.x] = sdata[0]; 
 }
 
-template <typename T,unsigned int gridSize,unsigned int blockSize>
-T sum(T* d_data,unsigned int len)
+template <typename T, int blockSize>
+T sum(T* d_data, int len,T* d_temp,T* temp, int gridSize)
 {
-	T* d_temp = NULL;
-	T* temp =NULL;
+	// T* d_temp = NULL;
+	// T* temp =NULL;
 	T res = T();
 	int pageSize = gridSize * blockSize;
 	int remains = 0;
@@ -300,8 +308,8 @@ T sum(T* d_data,unsigned int len)
 #ifdef DEBUG	
 	println("num of segments %d",numOfPages);
 #endif
-	automalloc(temp,gridSize,T);
-	automallocD(d_temp,gridSize,T);
+	// automalloc(temp,gridSize,T);
+	// automallocD(d_temp,gridSize,T);
 	for (int j = 0; j < numOfPages; j++)
 	{
 		CUDA_SAFE_CALL( cudaMemset(d_temp, 0, gridSize * sizeof(T)) );
@@ -319,13 +327,13 @@ T sum(T* d_data,unsigned int len)
 		}
 	}
 
-	autofreeD(d_temp);
-	autofree(temp);
+	// autofreeD(d_temp);
+	// autofree(temp);
 	return res;
 }
 
 template <typename T>
-__global__ void _sd(T* h,T* last_h,T* sd,unsigned int len)
+__global__ void _sd(T* h,T* last_h,T* sd, int len)
 {
 	int bi = blockIdx.x;
 	int bw = blockDim.x;

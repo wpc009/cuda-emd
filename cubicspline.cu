@@ -91,6 +91,7 @@ void testCusparse(){
         println("CUSPARSE Version:%d",version);
     }
 
+    cusparseDestroy(handle);
 
 }
 #endif
@@ -178,7 +179,7 @@ void testSum(){
 for(int j=1;j<len;j++){
     automallocD(d_data,j,float);
     CUDA_SAFE_CALL( cudaMemcpy(d_data,data,j* sizeof(float),cudaMemcpyHostToDevice) );
-    gpu_res = sum<float,28,512>(d_data,j);
+    // gpu_res = sum<float,512>(d_data,j);
     cpu_res = data[0];
     for(int i =1;i<j;i++)
     {
@@ -195,7 +196,7 @@ for(int j=1;j<len;j++){
 // Program main
 ////////////////////////////////////////////////////////////////////////////////
 int
-main( int argc, char** argv) 
+main(int argc, char** argv) 
 {
     int deviceCount;
     cudaGetDeviceCount(&deviceCount);
@@ -223,7 +224,7 @@ main( int argc, char** argv)
     {
         printf("Using device %d:\n", dev);
         printf("%s; global mem: %uB; compute v%d.%d; clock: %d kHz; multi processor count:%d\n",
-               prop.name, (unsigned int)prop.totalGlobalMem, (int)prop.major, 
+               prop.name, (int)prop.totalGlobalMem, (int)prop.major, 
                (int)prop.minor, (int)prop.clockRate,prop.multiProcessorCount);
     }
 
@@ -304,6 +305,7 @@ void testing2(int spline_len,int SYSTEM_SIZE){
     float** imfs = NULL;
     int memSize = len * sizeof(float);
     int error = 0;
+    int num_of_imfs = 5;
 
     spline_x = (float*) malloc(spline_len * sizeof(float));
     spline_y = (float*) malloc(spline_len * sizeof(float));
@@ -319,8 +321,11 @@ void testing2(int spline_len,int SYSTEM_SIZE){
     automallocD(d_prev,spline_len,float);
     automallocD(d_spline_out,spline_len,float);
     automallocD(d_check_point_idx,len,int);
-    automalloc(imfs,2,float*);
-    automalloc(imfs[0],spline_len,float);
+    automalloc(imfs,num_of_imfs,float*);
+    for( int i =0;i<num_of_imfs;i++){
+        automalloc(imfs[i],spline_len,float);    
+    }
+    
     
 
 
@@ -355,17 +360,22 @@ void testing2(int spline_len,int SYSTEM_SIZE){
     printArray(spline_y,spline_len);
 #endif
 
-    emd<float>(d_prev,(float**)imfs,spline_len,2);
+    emd<float>(d_prev,(float**)imfs,spline_len,num_of_imfs);
 
+    // for( int i =0;i<num_of_imfs;i++){
+        // printArray(imfs[i],spline_len);
+    // }
     printArray(imfs[0],spline_len);
 
 finally:
-    free(spline_x);
-    free(spline_y);
-    free(spline_out);
-    free(check_points);
-    free(imfs[0]);
-    free(imfs);
+    autofree(spline_x);
+    autofree(spline_y);
+    autofree(spline_out);
+    autofree(check_points);
+    for( int i =0;i<num_of_imfs;i++){
+        autofree(imfs[i]);
+    }
+    autofree(imfs);
     CUDA_SAFE_CALL( cudaFree(d_diff) );
     CUDA_SAFE_CALL( cudaFree(d_spline_x) );
     // CUDA_SAFE_CALL( cudaFree(d_spline_y) );
@@ -819,27 +829,27 @@ end:
     cudppDestroy(theCudpp);
 #endif
     println("free host memories");
-    free(a);
-    free(b);
-    free(c);
-    free(d);
-    free(h);
-    free(m);
+    autofree(a);
+    autofree(b);
+    autofree(c);
+    autofree(d);
+    autofree(h);
+    autofree(m);
 
-    free(a2);
-    free(b2);
-    free(c2);
-    free(d2);
-    free(h2);
-    free(m2);
+    autofree(a2);
+    autofree(b2);
+    autofree(c2);
+    autofree(d2);
+    autofree(h2);
+    autofree(m2);
 
-    free(maxima);
-    free(minima);
+    autofree(maxima);
+    autofree(minima);
 
-    free(x);
-    free(y);
-    free(spline_x);
-    free(spline_y);
+    autofree(x);
+    autofree(y);
+    autofree(spline_x);
+    autofree(spline_y);
     println("free device memories");
     CUDA_SAFE_CALL(cudaFree(d_a));
     CUDA_SAFE_CALL(cudaFree(d_b));

@@ -4,6 +4,22 @@
 #include "common.cuh"
 // #define DEBUG 
 
+/// Global
+cusparseHandle_t handle = 0;
+void * pBuffer = NULL;
+
+cusparseStatus_t init_cusparse()
+{
+    return cusparseCreate(&handle);
+}
+
+void free_cusparse()
+{
+    cusparseDestroy(handle);
+    autofreeD(pBuffer);
+}
+///
+
 template <typename T>
 __global__ void _prepare_systems(T* a, T* b, T* c, T* d, const T* x, const T* y, T* h, const int n)
 {
@@ -328,19 +344,19 @@ int cubic_spline_gpu(const T* d_data_x,const T* d_data_y,int check_point_len,T* 
     int res = 0;
 
 #ifdef DEBUG
-    T * m = (T*) malloc(memSize);
-    T * a = (T*) malloc(memSize);
-    T * b = (T*) malloc(memSize);
-    T * c = (T*) malloc(memSize);
-    T * h = (T*) malloc(memSize);
+    automalloc(m,check_point_len,T);
+    automalloc(a,check_point_len,T);
+    automalloc(b,check_point_len,T);
+    automalloc(c,check_point_len,T);
+    automalloc(h,check_point_len,T);
 #endif
 
     
-    CUDA_SAFE_CALL( cudaMalloc( (void**)&d_diff,memSize) );
-    CUDA_SAFE_CALL( cudaMalloc( (void**)&d_a,memSize) );
-    CUDA_SAFE_CALL( cudaMalloc( (void**)&d_b,memSize) );
-    CUDA_SAFE_CALL( cudaMalloc( (void**)&d_c,memSize) );
-    CUDA_SAFE_CALL( cudaMalloc( (void**)&d_m,memSize) );
+    automallocD(d_diff,check_point_len,T);
+    automallocD(d_a,check_point_len,T);
+    automallocD(d_b,check_point_len,T);
+    automallocD(d_c,check_point_len,T);
+    automallocD(d_m,check_point_len,T);
 
     CUDA_SAFE_CALL( cudaMemset(d_a,0,memSize) );
     CUDA_SAFE_CALL( cudaMemset(d_b,0,memSize) );
@@ -378,7 +394,6 @@ int cubic_spline_gpu(const T* d_data_x,const T* d_data_y,int check_point_len,T* 
         goto finalize;
     }
 
-    
     status = cusparseSgtsv(
         handle,
         check_point_len,1,
@@ -414,10 +429,11 @@ int cubic_spline_gpu(const T* d_data_x,const T* d_data_y,int check_point_len,T* 
     
     autofreeD(d_diff);
 #ifdef DEBUG
-    free(m);
-    free(a);
-    free(b);
-    free(c);
+    autofree(m);
+    autofree(a);
+    autofree(b);
+    autofree(c);
+    autofree(h);
 #endif
     autofreeD(d_a);
     autofreeD(d_b);
@@ -428,37 +444,38 @@ int cubic_spline_gpu(const T* d_data_x,const T* d_data_y,int check_point_len,T* 
 }
 
 
-template <typename T,int const systemSize>
-int cubic_spline_gpu(const int * d_check_point_idx,const T* d_data_y,const int check_point_len,T* d_spline_out,const int data_len)
+template <typename T,const int systemSize>
+int cubic_spline_gpu(const int * d_check_point_idx,const T* d_data_y,const int check_point_len,T* d_spline_out,const int data_len,T* d_a,T* d_b,T* d_c,T* d_m,T* d_diff)
 {
-    T * d_a = NULL;
-    T * d_b = NULL;
-    T * d_c = NULL;
-    T * d_m = NULL; 
-    T * d_diff = NULL;
+    // T * d_a = NULL;
+    // T * d_b = NULL;
+    // T * d_c = NULL;
+    // T * d_m = NULL; 
+    // T * d_diff = NULL;
 
 
 
     int memSize = check_point_len * sizeof(T);
     int numOfBlocks = blockalign(check_point_len,systemSize);
-    cusparseHandle_t handle = 0;
+    
     cusparseStatus_t status;
     int res = 0;
+    int gtsv_version = 2;
 
 #ifdef DEBUG
-    T * m = (T*) malloc(memSize);
-    T * a = (T*) malloc(memSize);
-    T * b = (T*) malloc(memSize);
-    T * c = (T*) malloc(memSize);
-    T * h = (T*) malloc(memSize);
+    automalloc(m,check_point_len,T);
+    automalloc(a,check_point_len,T);
+    automalloc(b,check_point_len,T);
+    automalloc(c,check_point_len,T);
+    automalloc(h,check_point_len,T);
 #endif
 
     
-    CUDA_SAFE_CALL( cudaMalloc( (void**)&d_diff,memSize) );
-    CUDA_SAFE_CALL( cudaMalloc( (void**)&d_a,memSize) );
-    CUDA_SAFE_CALL( cudaMalloc( (void**)&d_b,memSize) );
-    CUDA_SAFE_CALL( cudaMalloc( (void**)&d_c,memSize) );
-    CUDA_SAFE_CALL( cudaMalloc( (void**)&d_m,memSize) );
+    // automallocD(d_diff,check_point_len,T);
+    // automallocD(d_a,check_point_len,T);
+    // automallocD(d_b,check_point_len,T);
+    // automallocD(d_c,check_point_len,T);
+    // automallocD(d_m,check_point_len,T);
 
     CUDA_SAFE_CALL( cudaMemset(d_a,0,memSize) );
     CUDA_SAFE_CALL( cudaMemset(d_b,0,memSize) );
@@ -489,23 +506,63 @@ int cubic_spline_gpu(const int * d_check_point_idx,const T* d_data_y,const int c
     printArray(h,check_point_len);
 #endif
 
-    status = cusparseCreate(&handle);
-    if (status != CUSPARSE_STATUS_SUCCESS){
-        println("CUSPARSE Library initializing failed.");
-        res = -1;
-        goto finalize;
+    if(pBuffer == NULL){
+        size_t pBufferSizeInBytes=0;
+        //TODO: cusparseSgtsv2 only works for float. This makes template typename T useless.
+        
+        status = cusparseSgtsv2_bufferSizeExt(
+            handle,
+            check_point_len,1,
+            d_a,
+            d_b,
+            d_c,
+            d_m,
+            check_point_len,
+            &pBufferSizeInBytes    
+        );
+        if(status != CUSPARSE_STATUS_SUCCESS)
+        {
+            error("[code %d]fail go get buffer size for cusparseZgtsv2 fallback to internal buffer",status);
+            gtsv_version = 1;
+        }else{
+            automallocD(pBuffer,pBufferSizeInBytes,T);
+        }
+        
     }
 
     
-    status = cusparseSgtsv(
-        handle,
-        check_point_len,1,
-        d_a,
-        d_b,
-        d_c,
-        d_m,
-        check_point_len
-    );
+    switch(gtsv_version)
+    {
+        case 1:
+        status = cusparseSgtsv(
+            handle,
+            check_point_len, 1,
+            d_a,
+            d_b,
+            d_c,
+            d_m,
+            check_point_len
+        );
+        break;
+        case 2:
+        status = cusparseSgtsv2(
+            handle,
+            check_point_len, 1,
+            d_a,
+            d_b,
+            d_c,
+            d_m,
+            check_point_len,
+            pBuffer
+        );
+        break;
+
+    }
+    if( status != CUSPARSE_STATUS_SUCCESS)
+    {
+        error("[code %d] fail to solve tridiagonal system",status);
+        goto finalize;
+    }
     cudaThreadSynchronize();
 
 #ifdef DEBUG
@@ -528,19 +585,21 @@ int cubic_spline_gpu(const int * d_check_point_idx,const T* d_data_y,const int c
  * Finalize
  */
  finalize:
-    cusparseDestroy(handle);
     
-    autofreeD(d_diff);
+    
+    
 #ifdef DEBUG
-    free(m);
-    free(a);
-    free(b);
-    free(c);
+    autofree(m);
+    autofree(a);
+    autofree(b);
+    autofree(c);
+    autofree(h);
 #endif
-    autofreeD(d_a);
-    autofreeD(d_b);
-    autofreeD(d_c);
-    autofreeD(d_m);
+    // autofreeD(d_diff);
+    // autofreeD(d_a);
+    // autofreeD(d_b);
+    // autofreeD(d_c);
+    // autofreeD(d_m);
 
     return res;
 }
