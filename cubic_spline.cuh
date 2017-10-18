@@ -2,6 +2,9 @@
 #define _CUBIC_SPLINE_
 #include "cusparse.h"
 #include "common.cuh"
+
+
+
 // #define DEBUG 
 
 template <typename T>
@@ -210,6 +213,107 @@ __global__ void _cubic_spline2(const int* check_point_idx,const T* y,T* spline_o
     }
 }
 
+template <typename T>
+__global__ void _get_group_idx(const int* check_point_idx,int totalSize,int * group_index)
+{
+    uint ti = threadIdx.x;
+    uint i = ti + blockIdx.x * blockDim.x;
+    int middle = 0;
+    int start = 0;
+    int end = totalSize - 1;
+    int num_of_blocks = (check_point_idx[end] + blockDim.x -1) / blockDim.x;
+    if( i > check_point_idx[end])
+        return;
+
+    for(uint i = ti + blockIdx.x * blockDim.x;i < num_of_blocks;i += gridDim.x * blockDim.x)
+    {
+            start = 0;
+            end = totalSize - 1;
+            do {
+                middle = ((end - start) >> 1) + start;
+                if (check_point_idx[middle] <= i * blockDim.x)
+                {
+                    start = middle;
+                } else {
+                    end = middle;
+                }
+            } while (end - start > 1);
+
+            group_index[i] = start;
+    }
+    
+}
+
+template <typename T>
+__global__ void _cubic_spline3(const int* check_point_idx,const T* y,T* spline_out,const T* m,const T* h,int totalSize,int* group_index)
+{
+    extern __shared__ T sdata[];
+    uint tid = threadIdx.x;
+    uint i;
+    int middle = 0;
+    int start = 0;
+    int end = totalSize - 1;
+    int num_of_blocks = (check_point_idx[end] + blockDim.x -1) / blockDim.x;
+    int tail = check_point_idx[end];
+
+    // sdata[ti] = totalSize - 1;
+
+    for (uint bid = blockIdx.x; bid < num_of_blocks; bid += gridDim.x)
+    {
+        i = tid + bid * blockDim.x; 
+
+        if( i > tail)
+            return;
+
+        if ( bid  == num_of_blocks - 1) {
+            end = totalSize - 1;
+        } else {
+            end = min(group_index[bid + 1] + 1, totalSize - 1);
+        }
+        start = group_index[bid];
+
+        do {
+            middle = ((end - start) >> 1) + start;
+            if (check_point_idx[middle] <= i)
+            {
+                start = middle;
+            } else {
+                end = middle;
+            }
+        } while (end - start > 1);
+
+        int to_idx = end;
+        int from_idx = start;
+        sdata[tid * 4 ] = check_point_idx[start];
+        sdata[tid * 4 + 1] = check_point_idx[end];
+        sdata[tid * 4 + 2] = h[to_idx]; // 6
+        sdata[tid * 4 + 3] = sdata[tid * 4 + 2] * sdata[tid* 4 + 2];
+        //m[from_idx] //2
+        //m[to_idx] //2
+        //y[from_idx] //1
+        //y[to_idx] //1
+
+
+
+        if ( i == sdata[tid]) {
+            spline_out[i] = y[start];
+        } else if (i == sdata[tid + blockDim.x])
+        {
+            spline_out[i] = y[end];
+        } else
+        {
+
+            spline_out[i] =  m[from_idx] * powf(sdata[tid*4 + 1] - i, 3) / (6 * sdata[tid * 4 + 2])
+                             + m[to_idx] * powf(i - sdata[tid * 4], 3) / (6 * sdata[tid * 4 + 2])
+                             + (y[from_idx] - m[from_idx] * sdata[tid * 4 + 3] / 6) * (sdata[tid * 4 + 1] - i) / sdata[tid * 4 + 2]
+                             + (y[to_idx] - m[to_idx] * sdata[tid * 4 + 3] / 6) * (i - sdata[tid * 4]) / sdata[tid * 4 + 2]
+                             ;
+        }
+    }
+
+}
+
+
 
 
 /**
@@ -318,6 +422,7 @@ int cubic_spline_gpu(const T* d_data_x,const T* d_data_y,int check_point_len,T* 
     T * d_c = NULL;
     T * d_m = NULL; 
     T * d_diff = NULL;
+    T * d_group_idx = NULL;
 
 
 
@@ -341,6 +446,8 @@ int cubic_spline_gpu(const T* d_data_x,const T* d_data_y,int check_point_len,T* 
     CUDA_SAFE_CALL( cudaMalloc( (void**)&d_b,memSize) );
     CUDA_SAFE_CALL( cudaMalloc( (void**)&d_c,memSize) );
     CUDA_SAFE_CALL( cudaMalloc( (void**)&d_m,memSize) );
+
+    automallocD(d_group_idx,30,int);
 
     CUDA_SAFE_CALL( cudaMemset(d_a,0,memSize) );
     CUDA_SAFE_CALL( cudaMemset(d_b,0,memSize) );
@@ -401,8 +508,9 @@ int cubic_spline_gpu(const T* d_data_x,const T* d_data_y,int check_point_len,T* 
         goto finalize;
     }
     
-    _cubic_spline2<T><<< 28*2,systemSize >>>(d_data_x,d_data_y,d_spline_out,d_m,d_diff,check_point_len);
+    // _cubic_spline2<T><<< 28*2,systemSize >>>(d_data_x,d_data_y,d_spline_out,d_m,d_diff,check_point_len);
 
+    _cubic_spline3<T><<< 28,512 >>>(d_data_x,d_data_y,d_spline_out,d_m,d_diff,check_point_len,d_group_idx);
     cudaThreadSynchronize();
 
 
@@ -423,6 +531,7 @@ int cubic_spline_gpu(const T* d_data_x,const T* d_data_y,int check_point_len,T* 
     autofreeD(d_b);
     autofreeD(d_c);
     autofreeD(d_m);
+    autofreeD(d_group_idx);
 
     return res;
 }
@@ -436,6 +545,7 @@ int cubic_spline_gpu(const int * d_check_point_idx,const T* d_data_y,const int c
     T * d_c = NULL;
     T * d_m = NULL; 
     T * d_diff = NULL;
+    int * d_group_idx = NULL;
 
 
 
@@ -460,6 +570,9 @@ int cubic_spline_gpu(const int * d_check_point_idx,const T* d_data_y,const int c
     CUDA_SAFE_CALL( cudaMalloc( (void**)&d_c,memSize) );
     CUDA_SAFE_CALL( cudaMalloc( (void**)&d_m,memSize) );
 
+    automallocD(d_group_idx,28*2,int);
+
+    CUDA_SAFE_CALL( cudaMemset(d_group_idx,0,28*2 * sizeof(int)) );
     CUDA_SAFE_CALL( cudaMemset(d_a,0,memSize) );
     CUDA_SAFE_CALL( cudaMemset(d_b,0,memSize) );
     CUDA_SAFE_CALL( cudaMemset(d_c,0,memSize) );
@@ -519,7 +632,13 @@ int cubic_spline_gpu(const int * d_check_point_idx,const T* d_data_y,const int c
         goto finalize;
     }
     
-    _cubic_spline2<T><<< 28*2,systemSize >>>(d_check_point_idx,d_data_y,d_spline_out,d_m,d_diff,check_point_len);
+    _get_group_idx<T><<< 28*2,systemSize >>>(d_check_point_idx,check_point_len,d_group_idx);
+    cudaThreadSynchronize();
+    _cubic_spline3<T><<< 28*2,systemSize,systemSize * 4 * sizeof(T) >>>(d_check_point_idx,d_data_y,d_spline_out,d_m,d_diff,check_point_len,d_group_idx);
+
+    
+    // _cubic_spline2<T><<< 28*2,systemSize >>>(d_check_point_idx,d_data_y,d_spline_out,d_m,d_diff,check_point_len);
+
 
     cudaThreadSynchronize();
 
@@ -537,6 +656,7 @@ int cubic_spline_gpu(const int * d_check_point_idx,const T* d_data_y,const int c
     free(b);
     free(c);
 #endif
+    autofreeD(d_group_idx);
     autofreeD(d_a);
     autofreeD(d_b);
     autofreeD(d_c);
