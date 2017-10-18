@@ -12,6 +12,10 @@ include_directories(${CMAKE_SOURCE_DIR}/../../include)
 include_directories(./)
 link_directories(${CMAKE_SOURCE_DIR}/../../lib/)
 
+CUDA_SELECT_NVCC_ARCH_FLAGS(ARCH_FLAGS 6.1+PTX)
+
+List(APPEND CUDA_NVCC_FLAGS ${ARCH_FLAGS})
+
 set(CCFILES
   )
 
